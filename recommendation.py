@@ -4,12 +4,6 @@ from flask import Flask, request, jsonify
 from sklearn.neighbors import NearestNeighbors
 
 # 1️⃣ اتصال به پایگاه داده MySQL
-db = mysql.connector.connect(
-    host="localhost",
-    user="root",  # نام کاربری خود را تنظیم کنید
-    password="",  # رمزعبور پایگاه داده را تنظیم کنید
-    database="store"  # نام دیتابیس شما
-)
 
 cursor = db.cursor()
 
