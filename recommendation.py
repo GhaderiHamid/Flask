@@ -1,9 +1,20 @@
 import mysql.connector
+import os
 import pandas as pd
 from flask import Flask, request, jsonify
 from sklearn.neighbors import NearestNeighbors
 
 # 1️⃣ اتصال به پایگاه داده MySQL
+
+
+
+db = mysql.connector.connect(
+    host=os.getenv("DB_HOST"),
+    port=int(os.getenv("DB_PORT")),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD"),
+    database=os.getenv("DB_NAME")
+)
 
 cursor = db.cursor()
 
