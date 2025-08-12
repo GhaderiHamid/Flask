@@ -1,9 +1,8 @@
 {
-"platform": "flask",
-"app":"flask"
-"build":{
-"location":"iran"
+  "platform": "flask",
+  "app": "flask",
+  "build": {
+    "location": "iran"
+  },
+  "disks": []
 }
-"disks":[]
-}
-
