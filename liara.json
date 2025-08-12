@@ -1,5 +1,5 @@
 {
-  "app": "recommend",
+  "app": "flask",
   "port": 80,
   "build": {
     "location": "iran"
