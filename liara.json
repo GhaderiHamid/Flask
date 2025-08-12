@@ -4,6 +4,5 @@
   "build": {
     "location": "iran"
   },
-  "disks": [],
-  "command": "python3 recommendation.py"
+  "disks": []
 }
