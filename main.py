@@ -62,15 +62,22 @@ def recommend_products(user_id):
     return recommended_product_ids
 
 # 7️⃣ راه‌اندازی API با Flask برای ارتباط با لاراول
+#app = Flask(__name__)
+
+#@app.route("/recommend", methods=["GET"])
+#def recommend():
+    #user_id = int(request.args.get("user_id"))
+    #recommendations = recommend_products(user_id)
+
+    # تبدیل مقادیر به لیست عدد صحیح برای JSON
+    #return jsonify({"user_id": user_id, "recommendations": list(map(int, recommendations))})
+
+#if __name__ == "__main__":
+    #app.run(host="0.0.0.0", port=5000)
 app = Flask(__name__)
 
 @app.route("/recommend", methods=["GET"])
 def recommend():
     user_id = int(request.args.get("user_id"))
     recommendations = recommend_products(user_id)
-
-    # تبدیل مقادیر به لیست عدد صحیح برای JSON
     return jsonify({"user_id": user_id, "recommendations": list(map(int, recommendations))})
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
