@@ -1,8 +1,8 @@
 {
-  "platform": "flask",
-  "app": "flask",
-  "build": {
-    "location": "iran"
-  },
-  "disks": []
+"app":"flask"
+"port":80
+"build":{
+"location":"iran"
+}
+"disks":[]
 }
