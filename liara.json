@@ -5,5 +5,5 @@
     "location": "iran"
   },
   "disks": [],
-  "command": "python3 recommendation.py
+  "command": "python3 recommendation.py"
 }
