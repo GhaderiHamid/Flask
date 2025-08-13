@@ -52,15 +52,18 @@ model.fit(pivot_table)
 # 7️⃣ تابع پیشنهاد محصول با تنوع دسته‌بندی و تصادفی‌سازی
 def recommend_products(user_id, num_neighbors=10, max_recommendations=30, max_per_category=2):
     if user_id not in pivot_table.index:
+        return None  # برای هندل کردن در API
+
+    effective_neighbors = min(num_neighbors, num_samples)
+
+    try:
+        distances, indices = model.kneighbors([pivot_table.loc[user_id]], n_neighbors=effective_neighbors)
+    except Exception as e:
+        print("خطا در مدل:", e)
         return []
 
-    # پیدا کردن کاربران مشابه
-    distances, indices = model.kneighbors([pivot_table.loc[user_id]], n_neighbors=min(num_neighbors, num_samples))
-
-    # محصولات خریداری‌شده توسط کاربر هدف
     user_products = set(data[data['user_id'] == user_id]['product_id'])
 
-    # جمع‌آوری محصولات کاربران مشابه
     similar_users = pivot_table.index[indices[0]]
     all_new_products = pd.DataFrame()
 
@@ -69,16 +72,16 @@ def recommend_products(user_id, num_neighbors=10, max_recommendations=30, max_pe
         new_data = neighbor_data[~neighbor_data['product_id'].isin(user_products)]
         all_new_products = pd.concat([all_new_products, new_data])
 
-    # حذف تکراری‌ها
     all_new_products.drop_duplicates(subset='product_id', inplace=True)
 
-    # گروه‌بندی بر اساس دسته‌بندی و تصادفی‌سازی
     recommended_products = []
     grouped = list(all_new_products.groupby('category_id').items())
-    random.shuffle(grouped)  # تصادفی کردن ترتیب دسته‌بندی‌ها
+    random.shuffle(grouped)
 
     for _, group in grouped:
-        shuffled_group = group.sample(frac=1)  # تصادفی کردن محصولات داخل دسته
+        if group.empty:
+            continue
+        shuffled_group = group.sample(frac=1)
         selected = shuffled_group.head(max_per_category)
         recommended_products.extend(selected['product_id'].tolist())
 
@@ -94,8 +97,8 @@ app = Flask(__name__)
 def recommend():
     try:
         user_id = int(request.args.get("user_id"))
-        limit = int(request.args.get("limit", 30))  # تعداد کل پیشنهادها
-        per_category = int(request.args.get("per_category", 2))  # تعداد از هر دسته‌بندی
+        limit = int(request.args.get("limit", 30))
+        per_category = int(request.args.get("per_category", 2))
     except (TypeError, ValueError):
         return jsonify({"error": "پارامترهای ورودی نامعتبر هستند!"}), 400
 
@@ -105,6 +108,9 @@ def recommend():
         max_recommendations=limit,
         max_per_category=per_category
     )
+
+    if recommendations is None:
+        return jsonify({"error": "کاربر مورد نظر در سیستم یافت نشد!"}), 404
 
     return jsonify({"user_id": user_id, "recommendations": recommendations})
 
