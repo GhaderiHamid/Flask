@@ -49,17 +49,15 @@ model = NearestNeighbors(n_neighbors=min(10, num_samples), metric='cosine', algo
 model.fit(pivot_table)
 
 # 7️⃣ تابع پیشنهاد محصول با تنوع دسته‌بندی
+import random
 def recommend_products(user_id, num_neighbors=10, max_recommendations=30, max_per_category=2):
     if user_id not in pivot_table.index:
         return []
 
-    # پیدا کردن کاربران مشابه
     distances, indices = model.kneighbors([pivot_table.loc[user_id]], n_neighbors=min(num_neighbors, num_samples))
 
-    # محصولات خریداری‌شده توسط کاربر هدف
     user_products = set(data[data['user_id'] == user_id]['product_id'])
 
-    # جمع‌آوری محصولات کاربران مشابه
     similar_users = pivot_table.index[indices[0]]
     all_new_products = pd.DataFrame()
 
@@ -68,15 +66,17 @@ def recommend_products(user_id, num_neighbors=10, max_recommendations=30, max_pe
         new_data = neighbor_data[~neighbor_data['product_id'].isin(user_products)]
         all_new_products = pd.concat([all_new_products, new_data])
 
-    # حذف تکراری‌ها
     all_new_products.drop_duplicates(subset='product_id', inplace=True)
 
-    # گروه‌بندی بر اساس دسته‌بندی و انتخاب محدود از هر دسته
     recommended_products = []
-    grouped = all_new_products.groupby('category_id')
+    grouped = list(all_new_products.groupby('category_id').items())
+    random.shuffle(grouped)  # تصادفی کردن ترتیب دسته‌بندی‌ها
 
     for _, group in grouped:
-        selected = group.head(max_per_category)
+        if group.empty:
+            continue
+        shuffled_group = group.sample(frac=1)  # تصادفی کردن محصولات داخل دسته
+        selected = shuffled_group.head(max_per_category)
         recommended_products.extend(selected['product_id'].tolist())
 
         if len(recommended_products) >= max_recommendations:
