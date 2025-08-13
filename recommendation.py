@@ -7,54 +7,56 @@ from lightfm.data import Dataset
 from lightfm.cross_validation import random_train_test_split
 from scipy.sparse import coo_matrix
 
-# 1️⃣ اتصال به دیتابیس و دریافت داده‌ها
-db = mysql.connector.connect(
-    host=os.getenv("DB_HOST"),
-    port=int(os.getenv("DB_PORT")),
-    user=os.getenv("DB_USER"),
-    password=os.getenv("DB_PASSWORD"),
-    database=os.getenv("DB_NAME")
-)
+app = Flask(__name__)
 
-cursor = db.cursor()
-cursor.execute("""
-SELECT o.user_id, od.product_id
-FROM orders o
-JOIN order_details od ON o.id = od.order_id
-""")
-rows = cursor.fetchall()
-cursor.close()
-db.close()
+def get_data():
+    db = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        port=int(os.getenv("DB_PORT")),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
+    cursor = db.cursor()
+    cursor.execute("""
+    SELECT o.user_id, od.product_id
+    FROM orders o
+    JOIN order_details od ON o.id = od.order_id
+    """)
+    rows = cursor.fetchall()
+    cursor.close()
+    db.close()
 
-df = pd.DataFrame(rows, columns=["user_id", "product_id"])
-if df.empty:
-    raise Exception("❌ دیتابیس خالی است!")
+    df = pd.DataFrame(rows, columns=["user_id", "product_id"])
+    return df
 
-# 2️⃣ ساخت Dataset برای LightFM
-users = df["user_id"].unique()
-items = df["product_id"].unique()
-interactions = list(df.itertuples(index=False, name=None))
+def recommend_popular(df, top_n=30):
+    popular = df["product_id"].value_counts().head(top_n)
+    return list(map(int, popular.index))
 
-dataset = Dataset()
-dataset.fit(users, items)
-dataset.fit_partial(users=users, items=items)
-
-(interactions_matrix, _) = dataset.build_interactions(interactions)
-
-# 3️⃣ تقسیم داده‌ها به ۸۰٪ آموزش و ۲۰٪ تست
-train, test = random_train_test_split(interactions_matrix, test_percentage=0.2)
-
-# 4️⃣ آموزش مدل LightFM
-model = LightFM(loss="warp")
-model.fit(train, epochs=10, num_threads=2)
-
-# 5️⃣ ساخت نگاشت‌های داخلی
-user_id_map, user_feature_map, item_id_map, item_feature_map = dataset.mapping()
-
-# 6️⃣ تابع پیشنهاد محصول برای کاربر خاص
 def recommend_for_user(user_id, top_n=30):
+    df = get_data()
+    if df.empty:
+        return []
+
+    users = df["user_id"].unique()
+    items = df["product_id"].unique()
+    interactions = list(df.itertuples(index=False, name=None))
+
+    dataset = Dataset()
+    dataset.fit(users, items)
+    dataset.fit_partial(users=users, items=items)
+
+    (interactions_matrix, _) = dataset.build_interactions(interactions)
+    train, test = random_train_test_split(interactions_matrix, test_percentage=0.2)
+
+    model = LightFM(loss="warp")
+    model.fit(train, epochs=10, num_threads=2)
+
+    user_id_map, _, item_id_map, _ = dataset.mapping()
+
     if user_id not in user_id_map:
-        return recommend_popular(top_n)
+        return recommend_popular(df, top_n)
 
     internal_uid = user_id_map[user_id]
     all_item_ids = list(item_id_map.keys())
@@ -67,9 +69,6 @@ def recommend_for_user(user_id, top_n=30):
     recommendations = [int(pid) for pid, _ in scored_items if pid not in user_purchases]
 
     return recommendations[:top_n]
-
-# 7️⃣ راه‌اندازی Flask API
-app = Flask(__name__)
 
 @app.route("/recommend", methods=["GET"])
 def recommend():
