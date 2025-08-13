@@ -1,13 +1,13 @@
-import mysql.connector
 import os
+import mysql.connector
 import pandas as pd
-import random
 from flask import Flask, request, jsonify
-from sklearn.neighbors import NearestNeighbors
-from surprise import Dataset, Reader, SVD
-from surprise.model_selection import train_test_split
+from lightfm import LightFM
+from lightfm.data import Dataset
+from lightfm.cross_validation import random_train_test_split
+from scipy.sparse import coo_matrix
 
-# 1️⃣ اتصال به پایگاه داده MySQL
+# 1️⃣ اتصال به دیتابیس و دریافت داده‌ها
 db = mysql.connector.connect(
     host=os.getenv("DB_HOST"),
     port=int(os.getenv("DB_PORT")),
@@ -17,122 +17,69 @@ db = mysql.connector.connect(
 )
 
 cursor = db.cursor()
-
-# 2️⃣ دریافت اطلاعات خرید کاربران + دسته‌بندی محصولات
-query = """
-SELECT o.user_id, od.product_id, COUNT(*) AS rating, p.category_id
+cursor.execute("""
+SELECT o.user_id, od.product_id
 FROM orders o
 JOIN order_details od ON o.id = od.order_id
-JOIN products p ON od.product_id = p.id
-GROUP BY o.user_id, od.product_id, p.category_id
-"""
-
-cursor.execute(query)
-data = pd.DataFrame(cursor.fetchall(), columns=['user_id', 'product_id', 'rating', 'category_id'])
-
+""")
+rows = cursor.fetchall()
 cursor.close()
 db.close()
 
-# 3️⃣ بررسی اینکه دیتابیس خالی نباشد
-if data.empty:
-    print("❌ خطا: دیتابیس خرید کاربران خالی است!")
-    exit()
+df = pd.DataFrame(rows, columns=["user_id", "product_id"])
+if df.empty:
+    raise Exception("❌ دیتابیس خالی است!")
 
-# 4️⃣ ساخت دیتافریم برای SVD
-df_svd = data[['user_id', 'product_id', 'rating']]
+# 2️⃣ ساخت Dataset برای LightFM
+users = df["user_id"].unique()
+items = df["product_id"].unique()
+interactions = list(df.itertuples(index=False, name=None))
 
-reader = Reader(rating_scale=(1, df_svd['rating'].max()))
-dataset = Dataset.load_from_df(df_svd, reader)
-trainset, testset = train_test_split(dataset, test_size=0.2)
+dataset = Dataset()
+dataset.fit(users, items)
+dataset.fit_partial(users=users, items=items)
 
-svd_model = SVD()
-svd_model.fit(trainset)
+(interactions_matrix, _) = dataset.build_interactions(interactions)
 
-# 5️⃣ ساخت pivot table برای NearestNeighbors
-pivot_table = data.pivot(index='user_id', columns='product_id', values='product_id').fillna(0)
-num_samples = pivot_table.shape[0]
+# 3️⃣ تقسیم داده‌ها به ۸۰٪ آموزش و ۲۰٪ تست
+train, test = random_train_test_split(interactions_matrix, test_percentage=0.2)
 
-model_nn = NearestNeighbors(n_neighbors=min(10, num_samples), metric='cosine', algorithm='brute')
-model_nn.fit(pivot_table)
+# 4️⃣ آموزش مدل LightFM
+model = LightFM(loss="warp")
+model.fit(train, epochs=10, num_threads=2)
 
-# 6️⃣ تابع پیشنهاد با NearestNeighbors
-def recommend_with_neighbors(user_id, num_neighbors=10, max_recommendations=30, max_per_category=2):
-    if user_id not in pivot_table.index:
+# 5️⃣ ساخت نگاشت‌های داخلی
+user_id_map, user_feature_map, item_id_map, item_feature_map = dataset.mapping()
+
+# 6️⃣ تابع پیشنهاد محصول برای کاربر خاص
+def recommend_for_user(user_id, top_n=30):
+    if user_id not in user_id_map:
         return []
 
-    distances, indices = model_nn.kneighbors([pivot_table.loc[user_id]], n_neighbors=min(num_neighbors, num_samples))
-    user_products = set(data[data['user_id'] == user_id]['product_id'])
+    internal_uid = user_id_map[user_id]
+    all_item_ids = list(item_id_map.keys())
+    internal_iids = [item_id_map[iid] for iid in all_item_ids]
 
-    similar_users = pivot_table.index[indices[0]]
-    all_new_products = pd.DataFrame()
+    scores = model.predict(internal_uid, internal_iids)
+    scored_items = sorted(zip(all_item_ids, scores), key=lambda x: x[1], reverse=True)
 
-    for neighbor_id in similar_users:
-        neighbor_data = data[data['user_id'] == neighbor_id]
-        new_data = neighbor_data[~neighbor_data['product_id'].isin(user_products)]
-        all_new_products = pd.concat([all_new_products, new_data])
+    # حذف محصولاتی که کاربر قبلاً خریده
+    user_purchases = df[df["user_id"] == user_id]["product_id"].tolist()
+    recommendations = [int(pid) for pid, _ in scored_items if pid not in user_purchases]
 
-    all_new_products.drop_duplicates(subset='product_id', inplace=True)
+    return recommendations[:top_n]
 
-    recommended_products = []
-    grouped = all_new_products.groupby('category_id')
-    category_ids = list(grouped.groups.keys())
-    random.shuffle(category_ids)
-
-    for category_id in category_ids:
-        group = grouped.get_group(category_id)
-        if group.empty:
-            continue
-        shuffled_group = group.sample(frac=1)
-        selected = shuffled_group.head(max_per_category)
-        recommended_products.extend(selected['product_id'].tolist())
-
-        if len(recommended_products) >= max_recommendations:
-            break
-
-    return list(map(int, recommended_products[:max_recommendations]))
-
-# 7️⃣ تابع پیشنهاد با SVD
-def recommend_with_svd(user_id, top_n=30):
-    user_products = set(df_svd[df_svd['user_id'] == user_id]['product_id'])
-    all_products = set(df_svd['product_id'].unique())
-    candidate_products = list(all_products - user_products)
-
-    scored = []
-    for pid in candidate_products:
-        pred = svd_model.predict(user_id, pid)
-        scored.append((pid, pred.est))
-
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return [int(pid) for pid, _ in scored[:top_n]]
-
-# 8️⃣ پیشنهاد عمومی برای fallback
-def recommend_popular(limit=30):
-    popular = df_svd.groupby('product_id')['rating'].sum().sort_values(ascending=False)
-    return list(map(int, popular.head(limit).index))
-
-# 9️⃣ تابع ترکیبی هوشمند
-def hybrid_recommend(user_id, limit=30, per_category=2):
-    user_data = df_svd[df_svd['user_id'] == user_id]
-    if len(user_data) >= 5:
-        return recommend_with_svd(user_id, top_n=limit)
-    elif user_id in pivot_table.index:
-        return recommend_with_neighbors(user_id, max_recommendations=limit, max_per_category=per_category)
-    else:
-        return recommend_popular(limit)
-
-# 🔟 راه‌اندازی API با Flask
+# 7️⃣ راه‌اندازی Flask API
 app = Flask(__name__)
 
 @app.route("/recommend/<int:user_id>", methods=["GET"])
 def recommend(user_id):
     try:
         limit = int(request.args.get("limit", 30))
-        per_category = int(request.args.get("per_category", 2))
     except (TypeError, ValueError):
-        return jsonify({"error": "پارامترهای ورودی نامعتبر هستند!"}), 400
+        return jsonify({"error": "پارامتر نامعتبر است!"}), 400
 
-    recommendations = hybrid_recommend(user_id, limit=limit, per_category=per_category)
-
+    recommendations = recommend_for_user(user_id, top_n=limit)
     return jsonify({"user_id": user_id, "recommendations": recommendations})
 
 if __name__ == "__main__":
