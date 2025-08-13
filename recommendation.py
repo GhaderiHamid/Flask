@@ -54,7 +54,7 @@ user_id_map, user_feature_map, item_id_map, item_feature_map = dataset.mapping()
 # 6️⃣ تابع پیشنهاد محصول برای کاربر خاص
 def recommend_for_user(user_id, top_n=30):
     if user_id not in user_id_map:
-        return []
+        return recommend_popular(top_n)
 
     internal_uid = user_id_map[user_id]
     all_item_ids = list(item_id_map.keys())
@@ -63,7 +63,6 @@ def recommend_for_user(user_id, top_n=30):
     scores = model.predict(internal_uid, internal_iids)
     scored_items = sorted(zip(all_item_ids, scores), key=lambda x: x[1], reverse=True)
 
-    # حذف محصولاتی که کاربر قبلاً خریده
     user_purchases = df[df["user_id"] == user_id]["product_id"].tolist()
     recommendations = [int(pid) for pid, _ in scored_items if pid not in user_purchases]
 
