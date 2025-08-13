@@ -5,9 +5,6 @@ from flask import Flask, request, jsonify
 from sklearn.neighbors import NearestNeighbors
 
 # 1️⃣ اتصال به پایگاه داده MySQL
-
-
-
 db = mysql.connector.connect(
     host=os.getenv("DB_HOST"),
     port=int(os.getenv("DB_PORT")),
@@ -46,32 +43,46 @@ if num_samples < 2:
     print("❌ خطا: تعداد کاربران برای آموزش مدل کافی نیست!")
     exit()
 
-# 6️⃣ ایجاد مدل پیشنهادگر
-model = NearestNeighbors(n_neighbors=min(5, num_samples), metric='cosine', algorithm='brute')
+# 6️⃣ ایجاد مدل پیشنهادگر با تعداد همسایگان بیشتر
+model = NearestNeighbors(n_neighbors=min(10, num_samples), metric='cosine', algorithm='brute')
 model.fit(pivot_table)
 
-def recommend_products(user_id):
+# 7️⃣ تابع پیشنهاد محصول فقط برای محصولات جدید
+def recommend_products(user_id, num_neighbors=10, max_recommendations=10):
     if user_id not in pivot_table.index:
-        return []  # اگر کاربر در دیتابیس نبود، مقدار خالی برگردان
+        return []
 
-    distances, indices = model.kneighbors([pivot_table.loc[user_id]])
-    
-    # تبدیل مقادیر از int64 به int برای جلوگیری از خطای JSON
-    recommended_product_ids = [int(pivot_table.columns[i]) for i in indices[0]]
-    
-    return recommended_product_ids
+    # پیدا کردن کاربران مشابه
+    distances, indices = model.kneighbors([pivot_table.loc[user_id]], n_neighbors=min(num_neighbors, num_samples))
 
-# 7️⃣ راه‌اندازی API با Flask برای ارتباط با لاراول
+    # محصولات خریداری‌شده توسط کاربر هدف
+    user_products = set(data[data['user_id'] == user_id]['product_id'])
+
+    # جمع‌آوری محصولات کاربران مشابه
+    similar_users = pivot_table.index[indices[0]]
+    recommended_products = set()
+
+    for neighbor_id in similar_users:
+        neighbor_products = set(data[data['user_id'] == neighbor_id]['product_id'])
+        new_products = neighbor_products - user_products
+        recommended_products.update(new_products)
+
+    # محدود کردن تعداد پیشنهادها
+    return list(map(int, list(recommended_products)[:max_recommendations]))
+
+# 8️⃣ راه‌اندازی API با Flask برای ارتباط با لاراول
 app = Flask(__name__)
 
 @app.route("/recommend", methods=["GET"])
 def recommend():
-    user_id = int(request.args.get("user_id"))
-    recommendations = recommend_products(user_id)
+    try:
+        user_id = int(request.args.get("user_id"))
+        limit = int(request.args.get("limit", 10))  # تعداد پیشنهادها به صورت اختیاری
+    except (TypeError, ValueError):
+        return jsonify({"error": "پارامترهای ورودی نامعتبر هستند!"}), 400
 
-    # تبدیل مقادیر به لیست عدد صحیح برای JSON
-    return jsonify({"user_id": user_id, "recommendations": list(map(int, recommendations))})
+    recommendations = recommend_products(user_id, num_neighbors=10, max_recommendations=limit)
+    return jsonify({"user_id": user_id, "recommendations": recommendations})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
