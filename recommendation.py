@@ -1,6 +1,7 @@
 import mysql.connector
 import os
 import pandas as pd
+import random
 from flask import Flask, request, jsonify
 from sklearn.neighbors import NearestNeighbors
 
@@ -48,7 +49,7 @@ if num_samples < 2:
 model = NearestNeighbors(n_neighbors=min(10, num_samples), metric='cosine', algorithm='brute')
 model.fit(pivot_table)
 
-# 7️⃣ تابع پیشنهاد محصول با تنوع دسته‌بندی
+# 7️⃣ تابع پیشنهاد محصول با تنوع دسته‌بندی و تصادفی‌سازی
 def recommend_products(user_id, num_neighbors=10, max_recommendations=30, max_per_category=2):
     if user_id not in pivot_table.index:
         return []
@@ -71,12 +72,14 @@ def recommend_products(user_id, num_neighbors=10, max_recommendations=30, max_pe
     # حذف تکراری‌ها
     all_new_products.drop_duplicates(subset='product_id', inplace=True)
 
-    # گروه‌بندی بر اساس دسته‌بندی و انتخاب محدود از هر دسته
+    # گروه‌بندی بر اساس دسته‌بندی و تصادفی‌سازی
     recommended_products = []
-    grouped = all_new_products.groupby('category_id')
+    grouped = list(all_new_products.groupby('category_id').items())
+    random.shuffle(grouped)  # تصادفی کردن ترتیب دسته‌بندی‌ها
 
     for _, group in grouped:
-        selected = group.head(max_per_category)
+        shuffled_group = group.sample(frac=1)  # تصادفی کردن محصولات داخل دسته
+        selected = shuffled_group.head(max_per_category)
         recommended_products.extend(selected['product_id'].tolist())
 
         if len(recommended_products) >= max_recommendations:
