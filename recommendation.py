@@ -15,15 +15,16 @@ db = mysql.connector.connect(
 
 cursor = db.cursor()
 
-# 2️⃣ دریافت اطلاعات خرید کاربران از دیتابیس
+# 2️⃣ دریافت اطلاعات خرید کاربران + دسته‌بندی محصولات
 query = """
-SELECT od.product_id, o.user_id
+SELECT od.product_id, o.user_id, p.category_id
 FROM orders o
 JOIN order_details od ON o.id = od.order_id
+JOIN products p ON od.product_id = p.id
 """
 
 cursor.execute(query)
-data = pd.DataFrame(cursor.fetchall(), columns=['product_id', 'user_id'])
+data = pd.DataFrame(cursor.fetchall(), columns=['product_id', 'user_id', 'category_id'])
 
 cursor.close()
 db.close()
@@ -47,8 +48,8 @@ if num_samples < 2:
 model = NearestNeighbors(n_neighbors=min(10, num_samples), metric='cosine', algorithm='brute')
 model.fit(pivot_table)
 
-# 7️⃣ تابع پیشنهاد محصول فقط برای محصولات جدید
-def recommend_products(user_id, num_neighbors=10, max_recommendations=10):
+# 7️⃣ تابع پیشنهاد محصول با تنوع دسته‌بندی
+def recommend_products(user_id, num_neighbors=10, max_recommendations=30, max_per_category=2):
     if user_id not in pivot_table.index:
         return []
 
@@ -60,15 +61,28 @@ def recommend_products(user_id, num_neighbors=10, max_recommendations=10):
 
     # جمع‌آوری محصولات کاربران مشابه
     similar_users = pivot_table.index[indices[0]]
-    recommended_products = set()
+    all_new_products = pd.DataFrame()
 
     for neighbor_id in similar_users:
-        neighbor_products = set(data[data['user_id'] == neighbor_id]['product_id'])
-        new_products = neighbor_products - user_products
-        recommended_products.update(new_products)
+        neighbor_data = data[data['user_id'] == neighbor_id]
+        new_data = neighbor_data[~neighbor_data['product_id'].isin(user_products)]
+        all_new_products = pd.concat([all_new_products, new_data])
 
-    # محدود کردن تعداد پیشنهادها
-    return list(map(int, list(recommended_products)[:max_recommendations]))
+    # حذف تکراری‌ها
+    all_new_products.drop_duplicates(subset='product_id', inplace=True)
+
+    # گروه‌بندی بر اساس دسته‌بندی و انتخاب محدود از هر دسته
+    recommended_products = []
+    grouped = all_new_products.groupby('category_id')
+
+    for _, group in grouped:
+        selected = group.head(max_per_category)
+        recommended_products.extend(selected['product_id'].tolist())
+
+        if len(recommended_products) >= max_recommendations:
+            break
+
+    return list(map(int, recommended_products[:max_recommendations]))
 
 # 8️⃣ راه‌اندازی API با Flask برای ارتباط با لاراول
 app = Flask(__name__)
@@ -77,11 +91,18 @@ app = Flask(__name__)
 def recommend():
     try:
         user_id = int(request.args.get("user_id"))
-        limit = int(request.args.get("limit", 10))  # تعداد پیشنهادها به صورت اختیاری
+        limit = int(request.args.get("limit", 30))  # تعداد کل پیشنهادها
+        per_category = int(request.args.get("per_category", 2))  # تعداد از هر دسته‌بندی
     except (TypeError, ValueError):
         return jsonify({"error": "پارامترهای ورودی نامعتبر هستند!"}), 400
 
-    recommendations = recommend_products(user_id, num_neighbors=10, max_recommendations=limit)
+    recommendations = recommend_products(
+        user_id,
+        num_neighbors=10,
+        max_recommendations=limit,
+        max_per_category=per_category
+    )
+
     return jsonify({"user_id": user_id, "recommendations": recommendations})
 
 if __name__ == "__main__":
