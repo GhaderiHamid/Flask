@@ -72,9 +72,10 @@ def recommend_for_user(user_id, top_n=30):
 # 7️⃣ راه‌اندازی Flask API
 app = Flask(__name__)
 
-@app.route("/recommend/<int:user_id>", methods=["GET"])
-def recommend(user_id):
+@app.route("/recommend", methods=["GET"])
+def recommend():
     try:
+        user_id = int(request.args.get("user_id"))
         limit = int(request.args.get("limit", 30))
     except (TypeError, ValueError):
         return jsonify({"error": "پارامتر نامعتبر است!"}), 400
